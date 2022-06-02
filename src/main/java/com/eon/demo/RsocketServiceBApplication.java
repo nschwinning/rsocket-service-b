@@ -2,12 +2,24 @@ package com.eon.demo;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Locale;
 
+import org.flywaydb.core.Flyway;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
+import org.springframework.stereotype.Repository;
 
 import com.github.javafaker.Faker;
 
@@ -31,26 +43,84 @@ public class RsocketServiceBApplication {
 
 }
 
+@EnableScheduling
+@Configuration
+class SchedulingConfiguration {
+	
+}
+
+@Slf4j
+@Configuration
+class FlywayConfiguration {
+	
+	private final Environment env;
+
+    public FlywayConfiguration(final Environment env) {
+        this.env = env;
+    }
+
+    @Bean(initMethod = "migrate")
+    public Flyway flyway() {
+        var url = env.getRequiredProperty("spring.flyway.url");
+        var user = env.getRequiredProperty("spring.flyway.user");
+        var password = env.getRequiredProperty("spring.flyway.password");
+
+        log.info("Configuring database with flyway for URL: " + url + ", user: " + user);
+
+        return new Flyway(Flyway.configure().dataSource(url, user, password));
+    }
+	
+}
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+class QuoteGenerator {
+	
+	private final QuoteRepository quoteRepository;
+	private Faker faker = new Faker(Locale.GERMAN);
+	private final KafkaTemplate<String,QuoteDto> kafkaTemplate;
+	
+	@Scheduled(fixedDelay = 60000)
+	public void createQuote() {
+		
+		var quote = new Quote(faker.chuckNorris().fact());
+		quoteRepository.save(quote)
+			.subscribe(q -> {
+				log.info("Created quote with id " + q.getId());
+				kafkaTemplate.send("quotes", new QuoteDto(q.getId()));
+			});
+		
+	}
+	
+}
+
 @Slf4j
 @RequiredArgsConstructor
 @Controller
 class QuoteController {
 	
 	private Faker faker = new Faker(Locale.GERMAN);
+	private final QuoteRepository quoteRepository;
 	
 	//Request Stream
 	@MessageMapping("quotes")
 	public Flux<Quote> getQuotes(int boundary) {
 		return Flux.range(1, boundary)
-				.map(i -> new Quote(i, faker.chuckNorris().fact()))
+				.map(i -> new Quote(i, faker.chuckNorris().fact(), LocalDateTime.now()))
 				.delayElements(Duration.ofSeconds(1));
 	}
 	
 	//Request/Response
 	@MessageMapping("quote")
 	public Mono<Quote> getQuote() {
-		Quote quote = new Quote(1, faker.chuckNorris().fact());
+		Quote quote = new Quote(1, faker.chuckNorris().fact(), LocalDateTime.now());
 		return Mono.just(quote).delayElement(Duration.ofSeconds(5));
+	}
+	
+	@MessageMapping("quoteById")
+	public Mono<Quote> getQuoteById(long id) {
+		return quoteRepository.findById(id);
 	}
 	 
 	//Fire and Forget
@@ -61,10 +131,32 @@ class QuoteController {
 	}
 }
 
+@Repository
+interface QuoteRepository extends ReactiveCrudRepository<Quote, Long> {
+	
+}
+
 @NoArgsConstructor
 @AllArgsConstructor
 @Data
 class Quote {
-	private Integer quoteId; 
+	
+	@Id
+	private Integer id;
 	private String message;
+	private LocalDateTime createdAt;
+	
+	public Quote(String message) {
+		this.message=message;
+		this.createdAt=LocalDateTime.now();
+	}
+
+}
+
+@AllArgsConstructor
+@Data
+class QuoteDto {
+	
+	private Integer id;
+	
 }

@@ -1,0 +1,24 @@
+server:
+  port: 9390
+      
+spring:
+  rsocket:
+    server:
+      port: 9391
+  r2dbc:
+    username: smexnet
+    password: smexnet
+    url: r2dbc:postgresql://localhost:5433/smexnet?currentSchema=service-b
+  flyway:
+    enabled: true
+    url: jdbc:postgresql://localhost:5433/smexnet?currentSchema=service-b
+    user: smexnet
+    password: smexnet
+    baseline-on-migrate: true
+    table: schema_version
+  kafka:
+    bootstrap-servers: localhost:9093
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+        
