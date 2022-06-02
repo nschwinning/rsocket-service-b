@@ -15,8 +15,21 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.rsocket.RSocketStrategies;
+import org.springframework.messaging.rsocket.annotation.support.RSocketMessageHandler;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.rsocket.EnableRSocketSecurity;
+import org.springframework.security.config.annotation.rsocket.RSocketSecurity;
+import org.springframework.security.core.userdetails.MapReactiveUserDetailsService;
+import org.springframework.security.core.userdetails.ReactiveUserDetailsService;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.messaging.handler.invocation.reactive.AuthenticationPrincipalArgumentResolver;
+import org.springframework.security.rsocket.core.PayloadSocketAcceptorInterceptor;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Repository;
@@ -68,6 +81,44 @@ class FlywayConfiguration {
         log.info("Configuring database with flyway for URL: " + url + ", user: " + user);
 
         return new Flyway(Flyway.configure().dataSource(url, user, password));
+    }
+	
+}
+
+@Configuration
+@EnableRSocketSecurity
+class SecurityConfiguration {
+	
+	@Bean
+	public RSocketMessageHandler messageHandler(RSocketStrategies strategies) {
+		RSocketMessageHandler mh = new RSocketMessageHandler();
+		mh.getArgumentResolverConfigurer().addCustomResolver(new AuthenticationPrincipalArgumentResolver());
+		mh.setRSocketStrategies(strategies);
+		return mh;
+	}
+	
+	@Bean
+	public ReactiveUserDetailsService userDetailsService() {
+		final UserDetails user = User.withUsername("user")
+				.password(passwordEncoder().encode("password"))
+				.roles("USER")
+				.build();
+		return new MapReactiveUserDetailsService(user);
+	}
+	
+	@Bean
+	public PayloadSocketAcceptorInterceptor authorization(RSocketSecurity rsocket) {
+		return rsocket
+				.authorizePayload(authorize -> authorize
+						.route("quoteById").authenticated()
+						.anyExchange().permitAll())
+				.simpleAuthentication(Customizer.withDefaults())
+				.build();
+	}
+	
+	@Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
     }
 	
 }
